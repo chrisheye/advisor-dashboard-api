@@ -16,6 +16,7 @@ DEMO_CLIENTS = [
     {
         "id": "c1",
         "company_id": "company_a",
+        "advisor_id": "advisor_1",
         "client_name": "John Smith",
         "completed_at": "March 15, 2026",
         "persona": "Income Seeker",
@@ -61,6 +62,7 @@ DEMO_CLIENTS = [
     {
         "id": "c2",
         "company_id": "company_a",
+        "advisor_id": "advisor_2",
         "client_name": "Maria Lopez",
         "completed_at": "March 17, 2026",
         "persona": "Cautious Planner",
@@ -106,6 +108,7 @@ DEMO_CLIENTS = [
     {
         "id": "c3",
         "company_id": "company_b",
+        "advisor_id": "advisor_3",
         "client_name": "David Chen",
         "completed_at": "March 19, 2026",
         "persona": "Flexible Planner",
