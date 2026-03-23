@@ -161,7 +161,25 @@ def root():
 
 
 @app.get("/advisor-clients")
-def get_advisor_clients(company_id: str | None = None):
+def get_advisor_clients(
+    company_id: str | None = None,
+    advisor_id: str | None = None
+):
+    filtered_clients = DEMO_CLIENTS
+
+    if company_id is not None:
+        filtered_clients = [
+            client for client in filtered_clients
+            if client["company_id"] == company_id
+        ]
+
+    if advisor_id is not None:
+        filtered_clients = [
+            client for client in filtered_clients
+            if client["advisor_id"] == advisor_id
+        ]
+
+    return filtered_clients
     if company_id is None:
         return DEMO_CLIENTS
 
