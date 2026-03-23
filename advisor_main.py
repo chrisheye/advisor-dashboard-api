@@ -105,7 +105,7 @@ DEMO_CLIENTS = [
     },
     {
         "id": "c3",
-        "company_id": "company_a",
+        "company_id": "company_b",
         "client_name": "David Chen",
         "completed_at": "March 19, 2026",
         "persona": "Flexible Planner",
