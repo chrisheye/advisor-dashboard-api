@@ -255,9 +255,9 @@ def insert_test_session():
             "advisor_id": "advisor_1",
             "company_id": "company_a",
             "client_id": "client_1",
-            "response_payload": response_payload,
-            "score_payload": score_payload,
-            "summary_payload": summary_payload,
+            "response_payload": Json(response_payload),
+            "score_payload": Json(score_payload),
+            "summary_payload": Json(summary_payload),
             "status": "completed",
             "created_at": datetime.utcnow().isoformat()
         })
