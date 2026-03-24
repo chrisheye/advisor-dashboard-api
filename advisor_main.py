@@ -178,6 +178,39 @@ def migrate_client_sessions_to_jsonb():
         """))
     return {"ok": True, "migrated": True}
 
+
+@app.post("/client-sessions")
+def create_client_session(payload: ClientSessionCreate):
+    session_id = str(uuid.uuid4())
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO client_sessions (
+                id, tool_name, advisor_id, company_id, client_id,
+                response_payload, score_payload, summary_payload,
+                status, created_at
+            ) VALUES (
+                :id, :tool_name, :advisor_id, :company_id, :client_id,
+                :response_payload, :score_payload, :summary_payload,
+                :status, :created_at
+            )
+        """), {
+            "id": session_id,
+            "tool_name": payload.tool_name,
+            "advisor_id": payload.advisor_id,
+            "company_id": payload.company_id,
+            "client_id": payload.client_id,
+            "response_payload": Json(payload.response_payload),
+            "score_payload": Json(payload.score_payload) if payload.score_payload is not None else None,
+            "summary_payload": Json(payload.summary_payload) if payload.summary_payload is not None else None,
+            "status": "completed",
+            "created_at": datetime.utcnow().isoformat()
+        })
+
+    return {"ok": True, "id": session_id}
+
+
+
 @app.get("/delete-all-sessions")
 def delete_all_sessions():
     with engine.begin() as conn:
