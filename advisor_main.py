@@ -288,11 +288,22 @@ def reset_client_sessions_table():
     metadata.create_all(engine)
     return {"ok": True, "reset": True}
 
+import json
+
 @app.get("/get-sessions")
 def get_sessions():
     with engine.connect() as conn:
         result = conn.execute(text("SELECT * FROM client_sessions"))
-        rows = [dict(row._mapping) for row in result]
+        rows = []
+        for row in result:
+            r = dict(row._mapping)
+
+            r["response_payload"] = json.loads(r["response_payload"])
+            r["score_payload"] = json.loads(r["score_payload"])
+            r["summary_payload"] = json.loads(r["summary_payload"])
+
+            rows.append(r)
+
         return {"sessions": rows}
 
 
