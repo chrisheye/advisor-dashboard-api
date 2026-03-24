@@ -281,7 +281,13 @@ def debug_client_sessions_columns():
         columns = [row[0] for row in result]
         return {"columns": columns}
 
-
+@app.get("/reset-client-sessions-table")
+def reset_client_sessions_table():
+    with engine.connect() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS client_sessions"))
+    metadata.create_all(engine)
+    return {"ok": True, "reset": True}
+    
 
 @app.get("/advisor-clients")
 def get_advisor_clients(
