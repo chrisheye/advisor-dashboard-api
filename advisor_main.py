@@ -48,6 +48,16 @@ def db_test():
         return {"ok": result.scalar() == 1}
 
 
+class ClientSessionCreate(BaseModel):
+    tool_name: str
+    advisor_id: str
+    company_id: str
+    client_id: str | None = None
+    response_payload: dict
+    score_payload: dict | None = None
+    summary_payload: dict | None = None
+
+
 # --- ROUTES ---
 
 import json
