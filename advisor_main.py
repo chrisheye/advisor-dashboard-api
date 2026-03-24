@@ -287,7 +287,14 @@ def reset_client_sessions_table():
         conn.execute(text("DROP TABLE IF EXISTS client_sessions"))
     metadata.create_all(engine)
     return {"ok": True, "reset": True}
-    
+
+@app.get("/get-sessions")
+def get_sessions():
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT * FROM client_sessions"))
+        rows = [dict(row._mapping) for row in result]
+        return {"sessions": rows}
+
 
 @app.get("/advisor-clients")
 def get_advisor_clients(
