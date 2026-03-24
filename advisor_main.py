@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from sqlalchemy import create_engine, text, MetaData, Table, Column, String, JSON
