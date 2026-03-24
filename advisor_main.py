@@ -12,6 +12,7 @@ client_sessions = Table(
     "client_sessions",
     metadata,
     Column("id", String, primary_key=True),
+    Column("tool_name", String, nullable=False),
 )
 
 app = FastAPI()
