@@ -198,12 +198,12 @@ from datetime import datetime
 def insert_test_session():
     test_id = str(uuid.uuid4())
 
-    response_payload = json.dumps({
+    response_payload = {
         "q1": 4, "q2": 2, "q3": 5, "q4": 3, "q5": 4,
         "q6": 2, "q7": 5, "q8": 3, "q9": 4, "q10": 2
-    })
+    }
 
-    score_payload = json.dumps({
+    score_payload = {
         "persona": "Income Seeker",
         "protected_income_fit": "high",
         "risk_exposure": "Moderate–High",
@@ -216,9 +216,9 @@ def insert_test_session():
             "health": 52,
             "behavioral": 44
         }
-    })
+    }
 
-    summary_payload = json.dumps({
+    summary_payload = {
         "persona_description": "Focused on creating more reliable retirement income and reducing uncertainty.",
         "fit_label": "Strong Candidate",
         "fit_headline": "Strong Candidate for Protected Income Strategies",
@@ -235,7 +235,7 @@ def insert_test_session():
             "Explore comfort with market-based income.",
             "Present protected income as an option rather than a product pitch."
         ]
-    })
+    }
 
     with engine.begin() as conn:
         conn.execute(text("""
