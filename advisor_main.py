@@ -269,6 +269,20 @@ def root():
     return {"message": "advisor backend is running"}
 
 
+@app.get("/debug-client-sessions-columns")
+def debug_client_sessions_columns():
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'client_sessions'
+            ORDER BY ordinal_position
+        """))
+        columns = [row[0] for row in result]
+        return {"columns": columns}
+
+
+
 @app.get("/advisor-clients")
 def get_advisor_clients(
     company_id: str | None = None,
