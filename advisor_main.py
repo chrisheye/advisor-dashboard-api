@@ -18,6 +18,9 @@ client_sessions = Table(
     Column("client_id", String, nullable=True),
     Column("response_payload", String, nullable=False),
     Column("score_payload", String, nullable=True),
+    Column("summary_payload", String, nullable=True),
+    Column("status", String, nullable=False),
+    Column("created_at", String, nullable=False),
 )
 
 app = FastAPI()
@@ -186,6 +189,80 @@ DEMO_CLIENTS = [
 ]
 
 # --- ROUTES ---
+
+import json
+import uuid
+from datetime import datetime
+
+@app.get("/insert-test-session")
+def insert_test_session():
+    test_id = str(uuid.uuid4())
+
+    response_payload = json.dumps({
+        "q1": 4, "q2": 2, "q3": 5, "q4": 3, "q5": 4,
+        "q6": 2, "q7": 5, "q8": 3, "q9": 4, "q10": 2
+    })
+
+    score_payload = json.dumps({
+        "persona": "Income Seeker",
+        "protected_income_fit": "high",
+        "risk_exposure": "Moderate–High",
+        "readiness": "Ready for Discussion",
+        "key_drivers": ["High Longevity Risk", "Low Income Stability"],
+        "radar_scores": {
+            "longevity": 84,
+            "income_stability": 76,
+            "market_risk": 58,
+            "health": 52,
+            "behavioral": 44
+        }
+    })
+
+    summary_payload = json.dumps({
+        "persona_description": "Focused on creating more reliable retirement income and reducing uncertainty.",
+        "fit_label": "Strong Candidate",
+        "fit_headline": "Strong Candidate for Protected Income Strategies",
+        "fit_explanation": "Driven by high longevity risk and low income stability.",
+        "radar_caption": "This profile shows elevated longevity risk and income instability, suggesting a need for more predictable income sources.",
+        "talking_points": [
+            {"label": "Open", "text": "How are you thinking about income over what could be a long retirement horizon?"},
+            {"label": "Explore", "text": "How comfortable would you feel if markets were down for several years while you were drawing income?"},
+            {"label": "Introduce", "text": "Would you be open to exploring ways to create more predictable income as part of your broader retirement plan?"}
+        ],
+        "playbook_intro": "This playbook is designed for clients with high longevity risk and low income stability.",
+        "playbook_steps": [
+            "Introduce income stability as a planning priority.",
+            "Explore comfort with market-based income.",
+            "Present protected income as an option rather than a product pitch."
+        ]
+    })
+
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO client_sessions (
+                id, tool_name, advisor_id, company_id, client_id,
+                response_payload, score_payload, summary_payload,
+                status, created_at
+            ) VALUES (
+                :id, :tool_name, :advisor_id, :company_id, :client_id,
+                :response_payload, :score_payload, :summary_payload,
+                :status, :created_at
+            )
+        """), {
+            "id": test_id,
+            "tool_name": "annuity_puzzle_solver",
+            "advisor_id": "advisor_1",
+            "company_id": "company_a",
+            "client_id": "client_1",
+            "response_payload": response_payload,
+            "score_payload": score_payload,
+            "summary_payload": summary_payload,
+            "status": "completed",
+            "created_at": datetime.utcnow().isoformat()
+        })
+
+    return {"ok": True, "id": test_id}
+
 
 @app.get("/")
 def root():
