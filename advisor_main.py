@@ -13,6 +13,7 @@ client_sessions = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("tool_name", String, nullable=False),
+    Column("advisor_id", String, nullable=False),
 )
 
 app = FastAPI()
