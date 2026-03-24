@@ -237,7 +237,7 @@ def insert_test_session():
         ]
     })
 
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO client_sessions (
                 id, tool_name, advisor_id, company_id, client_id,
