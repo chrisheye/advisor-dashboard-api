@@ -295,16 +295,7 @@ import json
 def get_sessions():
     with engine.connect() as conn:
         result = conn.execute(text("SELECT * FROM client_sessions"))
-        rows = []
-        for row in result:
-            r = dict(row._mapping)
-
-            r["response_payload"] = json.loads(r["response_payload"])
-            r["score_payload"] = json.loads(r["score_payload"])
-            r["summary_payload"] = json.loads(r["summary_payload"])
-
-            rows.append(r)
-
+        rows = [dict(row._mapping) for row in result]
         return {"sessions": rows}
 
 @app.get("/migrate-client-sessions-to-jsonb")
