@@ -1,10 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, MetaData, Table, Column, String
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
+
+metadata = MetaData()
+
+client_sessions = Table(
+    "client_sessions",
+    metadata,
+    Column("id", String, primary_key=True),
+)
 
 app = FastAPI()
 
@@ -15,6 +23,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/create-client-sessions-table")
+def create_client_sessions_table():
+    metadata.create_all(engine)
+    return {"ok": True, "table": "client_sessions"}
+
 
 @app.get("/db-test")
 def db_test():
