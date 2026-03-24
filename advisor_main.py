@@ -16,9 +16,9 @@ client_sessions = Table(
     Column("advisor_id", String, nullable=False),
     Column("company_id", String, nullable=False),
     Column("client_id", String, nullable=True),
-    Column("response_payload", String, nullable=False),
-    Column("score_payload", String, nullable=True),
-    Column("summary_payload", String, nullable=True),
+    Column("response_payload", JSON, nullable=False),
+    Column("score_payload", JSON, nullable=True),
+    Column("summary_payload", JSON, nullable=True),
     Column("status", String, nullable=False),
     Column("created_at", String, nullable=False),
 )
