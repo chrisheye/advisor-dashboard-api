@@ -306,6 +306,17 @@ def get_sessions():
 
         return {"sessions": rows}
 
+@app.get("/migrate-client-sessions-to-jsonb")
+def migrate_client_sessions_to_jsonb():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            ALTER TABLE client_sessions
+            ALTER COLUMN response_payload TYPE jsonb USING response_payload::jsonb,
+            ALTER COLUMN score_payload TYPE jsonb USING score_payload::jsonb,
+            ALTER COLUMN summary_payload TYPE jsonb USING summary_payload::jsonb
+        """))
+    return {"ok": True, "migrated": True}
+
 
 @app.get("/advisor-clients")
 def get_advisor_clients(
