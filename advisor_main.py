@@ -14,6 +14,10 @@ client_sessions = Table(
     Column("id", String, primary_key=True),
     Column("tool_name", String, nullable=False),
     Column("advisor_id", String, nullable=False),
+    Column("company_id", String, nullable=False),
+    Column("client_id", String, nullable=True),
+    Column("response_payload", String, nullable=False),
+    Column("score_payload", String, nullable=True),
 )
 
 app = FastAPI()
