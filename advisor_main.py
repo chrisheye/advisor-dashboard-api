@@ -58,6 +58,20 @@ def create_clients_table():
     metadata.create_all(engine)
     return {"ok": True, "table": "clients"}
 
+
+@app.get("/debug-clients-columns")
+def debug_clients_columns():
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'clients'
+            ORDER BY ordinal_position
+        """))
+        columns = [row[0] for row in result]
+        return {"columns": columns}
+
+
 @app.get("/db-test")
 def db_test():
     with engine.connect() as conn:
