@@ -89,6 +89,14 @@ class ClientSessionCreate(BaseModel):
     summary_payload: dict | None = None
 
 
+class ClientCreate(BaseModel):
+    company_id: str
+    advisor_id: str
+    first_name: str
+    last_name: str
+    email: str
+
+
 # --- ROUTES ---
 
 import json
