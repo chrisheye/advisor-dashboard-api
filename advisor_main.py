@@ -25,6 +25,18 @@ client_sessions = Table(
     Column("created_at", String, nullable=False),
 )
 
+clients = Table(
+    "clients",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("company_id", String, nullable=False),
+    Column("advisor_id", String, nullable=False),
+    Column("first_name", String, nullable=False),
+    Column("last_name", String, nullable=False),
+    Column("email", String, nullable=False),
+    Column("created_at", String, nullable=False),
+)
+
 app = FastAPI()
 
 app.add_middleware(
