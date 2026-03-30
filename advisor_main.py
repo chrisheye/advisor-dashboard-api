@@ -286,6 +286,40 @@ def get_advisor_clients(
     ]
     return filtered_clients
 
+
+@app.get("/advisor-sessions")
+def get_advisor_sessions(advisor_id: str, company_id: str):
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT
+                cs.id,
+                cs.tool_name,
+                cs.advisor_id,
+                cs.company_id,
+                cs.client_id,
+                c.first_name,
+                c.last_name,
+                c.email,
+                cs.response_payload,
+                cs.score_payload,
+                cs.summary_payload,
+                cs.status,
+                cs.created_at
+            FROM client_sessions cs
+            LEFT JOIN clients c
+              ON cs.client_id = c.id
+            WHERE cs.advisor_id = :advisor_id
+              AND cs.company_id = :company_id
+            ORDER BY cs.created_at DESC
+        """), {
+            "advisor_id": advisor_id,
+            "company_id": company_id
+        })
+
+        rows = [dict(row._mapping) for row in result]
+        return {"sessions": rows}
+
+
 @app.post("/clients")
 def create_client(payload: ClientCreate):
     client_id = str(uuid.uuid4())
