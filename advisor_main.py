@@ -53,6 +53,11 @@ def create_client_sessions_table():
     return {"ok": True, "table": "client_sessions"}
 
 
+@app.get("/create-clients-table")
+def create_clients_table():
+    metadata.create_all(engine)
+    return {"ok": True, "table": "clients"}
+
 @app.get("/db-test")
 def db_test():
     with engine.connect() as conn:
