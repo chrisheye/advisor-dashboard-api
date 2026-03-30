@@ -285,3 +285,26 @@ def get_advisor_clients(
         if client["company_id"] == company_id
     ]
     return filtered_clients
+
+@app.post("/clients")
+def create_client(payload: ClientCreate):
+    client_id = str(uuid.uuid4())
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO clients (
+                id, company_id, advisor_id, first_name, last_name, email, created_at
+            ) VALUES (
+                :id, :company_id, :advisor_id, :first_name, :last_name, :email, :created_at
+            )
+        """), {
+            "id": client_id,
+            "company_id": payload.company_id,
+            "advisor_id": payload.advisor_id,
+            "first_name": payload.first_name,
+            "last_name": payload.last_name,
+            "email": payload.email,
+            "created_at": datetime.utcnow().isoformat()
+        })
+
+    return {"ok": True, "client_id": client_id}
