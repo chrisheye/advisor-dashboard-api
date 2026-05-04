@@ -291,7 +291,7 @@ def get_advisor_clients(
 def get_advisor_sessions(advisor_id: str, company_id: str):
     with engine.connect() as conn:
         result = conn.execute(text("""
-            SELECT
+            SELECT DISTINCT ON (cs.client_id, cs.tool_name)
                 cs.id,
                 cs.tool_name,
                 cs.advisor_id,
@@ -310,7 +310,7 @@ def get_advisor_sessions(advisor_id: str, company_id: str):
               ON cs.client_id = c.id
             WHERE cs.advisor_id = :advisor_id
               AND cs.company_id = :company_id
-            ORDER BY cs.created_at DESC
+            ORDER BY cs.client_id, cs.tool_name, cs.created_at DESC
         """), {
             "advisor_id": advisor_id,
             "company_id": company_id
