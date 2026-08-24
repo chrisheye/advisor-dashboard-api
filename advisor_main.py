@@ -4,11 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from sqlalchemy import create_engine, text, MetaData, Table, Column, String, JSON, Boolean
 from psycopg2.extras import Json
-from passlib.context import CryptContext
+from pwdlib import PasswordHash
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+password_hash = PasswordHash.recommended()
 
 metadata = MetaData()
 
@@ -197,7 +197,7 @@ def bootstrap_advisor():
     if not email or not password:
         return {"ok": False, "error": "Bootstrap environment variables are missing"}
 
-    password_hash = pwd_context.hash(password)
+    hashed_password = password_hash.hash(password)
 
     with engine.begin() as conn:
         existing = conn.execute(
@@ -220,7 +220,7 @@ def bootstrap_advisor():
             "id": "advisor_1",
             "company_id": "company_a",
             "email": email,
-            "password_hash": password_hash,
+            "password_hash": hashed_password,
             "role": "advisor",
             "is_active": True,
             "created_at": datetime.utcnow().isoformat()
