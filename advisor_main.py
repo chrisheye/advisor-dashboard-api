@@ -186,14 +186,6 @@ def get_advisor_sessions(advisor_id: str, company_id: str):
         rows = [dict(row._mapping) for row in result]
         return {"sessions": rows}
 
-@app.get("/check-advisors-table")
-def check_advisors_table():
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT COUNT(*) FROM advisors"))
-        count = result.scalar()
-
-    return {"advisors_table_exists": True, "count": count}
-
 
 @app.post("/clients")
 def create_client(payload: ClientCreate):
