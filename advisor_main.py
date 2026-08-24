@@ -99,6 +99,10 @@ class AdvisorLogin(BaseModel):
     email: str
     password: str
 
+class ClientTokenRequest(BaseModel):
+    invite_token: str
+    client_id: str
+
 
 def get_current_advisor(
     credentials: HTTPAuthorizationCredentials = Depends(security)
@@ -172,6 +176,57 @@ def verify_client_invite_token(token: str):
         "company_id": payload["company_id"]
     }
 
+def create_client_access_token(client_id: str, advisor_id: str, company_id: str):
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+
+    return jwt.encode(
+        {
+            "sub": client_id,
+            "advisor_id": advisor_id,
+            "company_id": company_id,
+            "role": "client",
+            "type": "client_session",
+            "exp": expires_at
+        },
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM
+    )
+
+
+@app.post("/client-access-token")
+def client_access_token(payload: ClientTokenRequest):
+    invite = verify_client_invite_token(payload.invite_token)
+
+    with engine.connect() as conn:
+        client = conn.execute(
+            text("""
+                SELECT id, advisor_id, company_id
+                FROM clients
+                WHERE id = :client_id
+                  AND advisor_id = :advisor_id
+                  AND company_id = :company_id
+            """),
+            {
+                "client_id": payload.client_id,
+                "advisor_id": invite["advisor_id"],
+                "company_id": invite["company_id"]
+            }
+        ).fetchone()
+
+    if not client:
+        raise HTTPException(status_code=401, detail="Invalid client")
+
+    token = create_client_access_token(
+        payload.client_id,
+        invite["advisor_id"],
+        invite["company_id"]
+    )
+
+    return {
+        "ok": True,
+        "access_token": token,
+        "token_type": "bearer"
+    }
 
 
 @app.get("/")
@@ -338,9 +393,16 @@ def create_client(payload: ClientCreate):
             "created_at": datetime.utcnow().isoformat()
         })
 
+    client_token = create_client_access_token(
+        client_id,
+        invite["advisor_id"],
+        invite["company_id"]
+    )
+
     return {
         "ok": True,
         "client_id": client_id,
         "company_id": invite["company_id"],
-        "advisor_id": invite["advisor_id"]
-}
+        "advisor_id": invite["advisor_id"],
+        "client_access_token": client_token
+    }
