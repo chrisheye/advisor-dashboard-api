@@ -85,6 +85,9 @@ class ClientSessionCreate(BaseModel):
     score_payload: dict | None = None
     summary_payload: dict | None = None
 
+    class Config:
+        extra = "forbid"
+
 class ClientCreate(BaseModel):
     invite_token: str
     first_name: str
