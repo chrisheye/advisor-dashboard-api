@@ -189,46 +189,6 @@ def get_advisor_sessions(advisor_id: str, company_id: str):
         return {"sessions": rows}
         
 
-@app.post("/bootstrap-advisor")
-def bootstrap_advisor():
-    email = os.getenv("ADVISOR_BOOTSTRAP_EMAIL")
-    password = os.getenv("ADVISOR_BOOTSTRAP_PASSWORD")
-
-    if not email or not password:
-        return {"ok": False, "error": "Bootstrap environment variables are missing"}
-
-    hashed_password = password_hash.hash(password)
-
-    with engine.begin() as conn:
-        existing = conn.execute(
-            text("SELECT id FROM advisors WHERE email = :email"),
-            {"email": email}
-        ).fetchone()
-
-        if existing:
-            return {"ok": True, "message": "Advisor already exists"}
-
-        conn.execute(text("""
-            INSERT INTO advisors (
-                id, company_id, email, password_hash,
-                role, is_active, created_at
-            ) VALUES (
-                :id, :company_id, :email, :password_hash,
-                :role, :is_active, :created_at
-            )
-        """), {
-            "id": "advisor_1",
-            "company_id": "company_a",
-            "email": email,
-            "password_hash": hashed_password,
-            "role": "advisor",
-            "is_active": True,
-            "created_at": datetime.utcnow().isoformat()
-        })
-
-    return {"ok": True, "message": "Advisor created"}
-
-
 @app.post("/clients")
 def create_client(payload: ClientCreate):
     client_id = str(uuid.uuid4())
