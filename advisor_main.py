@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
-from sqlalchemy import create_engine, text, MetaData, Table, Column, String, JSON
+from sqlalchemy import create_engine, text, MetaData, Table, Column, String, JSON, Boolean
 from psycopg2.extras import Json
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -36,6 +36,21 @@ clients = Table(
     Column("email", String, nullable=False),
     Column("created_at", String, nullable=False),
 )
+
+
+advisors = Table(
+    "advisors",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("company_id", String, nullable=False),
+    Column("email", String, nullable=False, unique=True),
+    Column("password_hash", String, nullable=False),
+    Column("role", String, nullable=False),
+    Column("is_active", Boolean, nullable=False),
+    Column("created_at", String, nullable=False),
+)
+
+metadata.create_all(engine, tables=[advisors])
 
 app = FastAPI()
 
