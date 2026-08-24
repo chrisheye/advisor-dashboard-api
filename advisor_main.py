@@ -116,12 +116,15 @@ def get_current_advisor(
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    if payload.get("role") != "advisor":
+        raise HTTPException(status_code=403, detail="Advisor access required")
+
     return {
         "advisor_id": payload["sub"],
         "company_id": payload["company_id"],
         "role": payload["role"]
     }
-
+    
 def create_client_invite_token(advisor_id: str, company_id: str):
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
