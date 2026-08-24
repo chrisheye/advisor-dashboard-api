@@ -81,13 +81,9 @@ if not JWT_SECRET:
 
 class ClientSessionCreate(BaseModel):
     tool_name: str
-    advisor_id: str
-    company_id: str
-    client_id: str | None = None
     response_payload: dict
     score_payload: dict | None = None
     summary_payload: dict | None = None
-
 
 class ClientCreate(BaseModel):
     invite_token: str
@@ -258,7 +254,10 @@ def root():
     return {"message": "advisor backend is running"}
 
 @app.post("/client-sessions")
-def create_client_session(payload: ClientSessionCreate):
+def create_client_session(
+    payload: ClientSessionCreate,
+    current_client: dict = Depends(get_current_client)
+):
     session_id = str(uuid.uuid4())
 
     with engine.begin() as conn:
@@ -275,9 +274,9 @@ def create_client_session(payload: ClientSessionCreate):
         """), {
             "id": session_id,
             "tool_name": payload.tool_name,
-            "advisor_id": payload.advisor_id,
-            "company_id": payload.company_id,
-            "client_id": payload.client_id,
+            "advisor_id": current_client["advisor_id"],
+            "company_id": current_client["company_id"],
+            "client_id": current_client["client_id"],
             "response_payload": Json(payload.response_payload),
             "score_payload": Json(payload.score_payload) if payload.score_payload is not None else None,
             "summary_payload": Json(payload.summary_payload) if payload.summary_payload is not None else None,
