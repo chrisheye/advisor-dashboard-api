@@ -90,8 +90,7 @@ class ClientSessionCreate(BaseModel):
 
 
 class ClientCreate(BaseModel):
-    company_id: str
-    advisor_id: str
+    invite_token: str
     first_name: str
     last_name: str
     email: str
@@ -152,6 +151,27 @@ def create_client_invite(
         "ok": True,
         "invite_token": token
     }
+
+def verify_client_invite_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM]
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Client invite expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid client invite")
+
+    if payload.get("type") != "client_invite":
+        raise HTTPException(status_code=401, detail="Invalid client invite")
+
+    return {
+        "advisor_id": payload["advisor_id"],
+        "company_id": payload["company_id"]
+    }
+
 
 
 @app.get("/")
@@ -297,6 +317,8 @@ def advisor_login(payload: AdvisorLogin):
 
 @app.post("/clients")
 def create_client(payload: ClientCreate):
+    invite = verify_client_invite_token(payload.invite_token)
+
     client_id = str(uuid.uuid4())
 
     with engine.begin() as conn:
@@ -308,8 +330,8 @@ def create_client(payload: ClientCreate):
             )
         """), {
             "id": client_id,
-            "company_id": payload.company_id,
-            "advisor_id": payload.advisor_id,
+            "company_id": invite["company_id"],
+            "advisor_id": invite["advisor_id"],
             "first_name": payload.first_name,
             "last_name": payload.last_name,
             "email": payload.email,
