@@ -164,26 +164,23 @@ def create_client_session(payload: ClientSessionCreate):
 
 @app.get("/advisor-clients")
 def get_advisor_clients(
-    company_id: str | None = None,
-    advisor_id: str | None = None
+    current_advisor: dict = Depends(get_current_advisor)
 ):
+    company_id = current_advisor["company_id"]
+    advisor_id = current_advisor["advisor_id"]
+
     query = """
         SELECT id, company_id, advisor_id, first_name, last_name, email, created_at
         FROM clients
-        WHERE 1=1
+        WHERE company_id = :company_id
+          AND advisor_id = :advisor_id
+        ORDER BY last_name, first_name
     """
 
-    params = {}
-
-    if company_id is not None:
-        query += " AND company_id = :company_id"
-        params["company_id"] = company_id
-
-    if advisor_id is not None:
-        query += " AND advisor_id = :advisor_id"
-        params["advisor_id"] = advisor_id
-
-    query += " ORDER BY last_name, first_name"
+    params = {
+        "company_id": company_id,
+        "advisor_id": advisor_id
+    }
 
     with engine.connect() as conn:
         result = conn.execute(text(query), params)
