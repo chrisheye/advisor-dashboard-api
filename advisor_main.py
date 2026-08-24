@@ -83,6 +83,9 @@ class ClientCreate(BaseModel):
     last_name: str
     email: str
 
+class AdvisorLogin(BaseModel):
+    email: str
+    password: str
 
 # --- ROUTES ---
 
@@ -187,7 +190,37 @@ def get_advisor_sessions(advisor_id: str, company_id: str):
 
         rows = [dict(row._mapping) for row in result]
         return {"sessions": rows}
-        
+
+
+@app.post("/login")
+def advisor_login(payload: AdvisorLogin):
+    with engine.connect() as conn:
+        advisor = conn.execute(
+            text("""
+                SELECT id, company_id, email, password_hash, role, is_active
+                FROM advisors
+                WHERE email = :email
+            """),
+            {"email": payload.email}
+        ).fetchone()
+
+    if not advisor:
+        return {"ok": False, "error": "Invalid email or password"}
+
+    advisor = dict(advisor._mapping)
+
+    if not advisor["is_active"]:
+        return {"ok": False, "error": "Account is inactive"}
+
+    if not password_hash.verify(payload.password, advisor["password_hash"]):
+        return {"ok": False, "error": "Invalid email or password"}
+
+    return {
+        "ok": True,
+        "advisor_id": advisor["id"],
+        "company_id": advisor["company_id"],
+        "role": advisor["role"]
+    }    
 
 @app.post("/clients")
 def create_client(payload: ClientCreate):
