@@ -9,6 +9,7 @@ import jwt
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from fastapi import FastAPI, Header, HTTPException, Depends
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
@@ -97,9 +98,32 @@ class AdvisorLogin(BaseModel):
     email: str
     password: str
 
+
+def get_current_advisor(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+
+    token = authorization.split(" ", 1)[1]
+
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM]
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return {
+        "advisor_id": payload["sub"],
+        "company_id": payload["company_id"],
+        "role": payload["role"]
+    }
+
+
 # --- ROUTES ---
-
-
 
 @app.get("/")
 def root():
@@ -168,7 +192,9 @@ def get_advisor_clients(
     
 
 @app.get("/advisor-sessions")
-def get_advisor_sessions(advisor_id: str, company_id: str):
+def get_advisor_sessions(current_advisor: dict = Depends(get_current_advisor)):
+    advisor_id = current_advisor["advisor_id"]
+    company_id = current_advisor["company_id"]
     with engine.connect() as conn:
         result = conn.execute(text("""
             SELECT DISTINCT ON (cs.client_id, cs.tool_name)
@@ -242,174 +268,6 @@ def advisor_login(payload: AdvisorLogin):
         "access_token": token,
         "token_type": "bearer"
     }   
-
-@app.post("/clients")
-def create_client(payload: ClientCreate):
-    client_id = str(uuid.uuid4())
-
-    with engine.begin() as conn:
-        conn.execute(text("""
-            INSERT INTO clients (
-                id, company_id, advisor_id, first_name, last_name, email, created_at
-            ) VALUES (
-                :id, :company_id, :advisor_id, :first_name, :last_name, :email, :created_at
-            )
-        """), {
-            "id": client_id,
-            "company_id": payload.company_id,
-            "advisor_id": payload.advisor_id,
-            "first_name": payload.first_name,
-            "last_name": payload.last_name,
-            "email": payload.email,
-            "created_at": datetime.utcnow().isoformat()
-        })
-
-    return {"ok": True, "client_id": client_id}
-class ClientCreate(BaseModel):
-    company_id: str
-    advisor_id: str
-    first_name: str
-    last_name: str
-    email: str
-
-class AdvisorLogin(BaseModel):
-    email: str
-    password: str
-
-# --- ROUTES ---
-
-import json
-import uuid
-from datetime import datetime
-
-@app.get("/")
-def root():
-    return {"message": "advisor backend is running"}
-
-@app.post("/client-sessions")
-def create_client_session(payload: ClientSessionCreate):
-    session_id = str(uuid.uuid4())
-
-    with engine.begin() as conn:
-        conn.execute(text("""
-            INSERT INTO client_sessions (
-                id, tool_name, advisor_id, company_id, client_id,
-                response_payload, score_payload, summary_payload,
-                status, created_at
-            ) VALUES (
-                :id, :tool_name, :advisor_id, :company_id, :client_id,
-                :response_payload, :score_payload, :summary_payload,
-                :status, :created_at
-            )
-        """), {
-            "id": session_id,
-            "tool_name": payload.tool_name,
-            "advisor_id": payload.advisor_id,
-            "company_id": payload.company_id,
-            "client_id": payload.client_id,
-            "response_payload": Json(payload.response_payload),
-            "score_payload": Json(payload.score_payload) if payload.score_payload is not None else None,
-            "summary_payload": Json(payload.summary_payload) if payload.summary_payload is not None else None,
-            "status": "completed",
-            "created_at": datetime.utcnow().isoformat()
-        })
-
-    return {"ok": True, "id": session_id}
-
-
-
-@app.get("/advisor-clients")
-def get_advisor_clients(
-    company_id: str | None = None,
-    advisor_id: str | None = None
-):
-    query = """
-        SELECT id, company_id, advisor_id, first_name, last_name, email, created_at
-        FROM clients
-        WHERE 1=1
-    """
-
-    params = {}
-
-    if company_id is not None:
-        query += " AND company_id = :company_id"
-        params["company_id"] = company_id
-
-    if advisor_id is not None:
-        query += " AND advisor_id = :advisor_id"
-        params["advisor_id"] = advisor_id
-
-    query += " ORDER BY last_name, first_name"
-
-    with engine.connect() as conn:
-        result = conn.execute(text(query), params)
-        rows = [dict(row._mapping) for row in result]
-
-    return rows
-    
-
-@app.get("/advisor-sessions")
-def get_advisor_sessions(advisor_id: str, company_id: str):
-    with engine.connect() as conn:
-        result = conn.execute(text("""
-            SELECT DISTINCT ON (cs.client_id, cs.tool_name)
-                cs.id,
-                cs.tool_name,
-                cs.advisor_id,
-                cs.company_id,
-                cs.client_id,
-                c.first_name,
-                c.last_name,
-                c.email,
-                cs.response_payload,
-                cs.score_payload,
-                cs.summary_payload,
-                cs.status,
-                cs.created_at
-            FROM client_sessions cs
-            LEFT JOIN clients c
-              ON cs.client_id = c.id
-            WHERE cs.advisor_id = :advisor_id
-              AND cs.company_id = :company_id
-            ORDER BY cs.client_id, cs.tool_name, cs.created_at DESC
-        """), {
-            "advisor_id": advisor_id,
-            "company_id": company_id
-        })
-
-        rows = [dict(row._mapping) for row in result]
-        return {"sessions": rows}
-
-
-@app.post("/login")
-def advisor_login(payload: AdvisorLogin):
-    with engine.connect() as conn:
-        advisor = conn.execute(
-            text("""
-                SELECT id, company_id, email, password_hash, role, is_active
-                FROM advisors
-                WHERE email = :email
-            """),
-            {"email": payload.email}
-        ).fetchone()
-
-    if not advisor:
-        return {"ok": False, "error": "Invalid email or password"}
-
-    advisor = dict(advisor._mapping)
-
-    if not advisor["is_active"]:
-        return {"ok": False, "error": "Account is inactive"}
-
-    if not password_hash.verify(payload.password, advisor["password_hash"]):
-        return {"ok": False, "error": "Invalid email or password"}
-
-    return {
-        "ok": True,
-        "advisor_id": advisor["id"],
-        "company_id": advisor["company_id"],
-        "role": advisor["role"]
-    }    
 
 @app.post("/clients")
 def create_client(payload: ClientCreate):
