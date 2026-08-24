@@ -209,6 +209,9 @@ def get_current_client(
 
     if payload.get("type") != "client_session":
         raise HTTPException(status_code=401, detail="Invalid client session")
+        
+    if payload.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client access required")
 
     return {
         "client_id": payload["sub"],
