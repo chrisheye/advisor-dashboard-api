@@ -192,6 +192,30 @@ def create_client_access_token(client_id: str, advisor_id: str, company_id: str)
         algorithm=JWT_ALGORITHM
     )
 
+def get_current_client(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM]
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Client session expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid client session")
+
+    if payload.get("type") != "client_session":
+        raise HTTPException(status_code=401, detail="Invalid client session")
+
+    return {
+        "client_id": payload["sub"],
+        "advisor_id": payload["advisor_id"],
+        "company_id": payload["company_id"]
+    }
 
 @app.post("/client-access-token")
 def client_access_token(payload: ClientTokenRequest):
@@ -291,6 +315,30 @@ def get_advisor_clients(
 
     return rows
     
+
+@app.get("/client-sessions/me")
+def get_client_sessions(
+    current_client: dict = Depends(get_current_client)
+):
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT *
+                FROM client_sessions
+                WHERE client_id = :client_id
+                  AND advisor_id = :advisor_id
+                  AND company_id = :company_id
+                ORDER BY created_at DESC
+            """),
+            {
+                "client_id": current_client["client_id"],
+                "advisor_id": current_client["advisor_id"],
+                "company_id": current_client["company_id"]
+            }
+        ).fetchall()
+
+    return [dict(row._mapping) for row in rows]
+
 
 @app.get("/advisor-sessions")
 def get_advisor_sessions(current_advisor: dict = Depends(get_current_advisor)):
