@@ -338,4 +338,9 @@ def create_client(payload: ClientCreate):
             "created_at": datetime.utcnow().isoformat()
         })
 
-    return {"ok": True, "client_id": client_id}
+    return {
+        "ok": True,
+        "client_id": client_id,
+        "company_id": invite["company_id"],
+        "advisor_id": invite["advisor_id"]
+}
