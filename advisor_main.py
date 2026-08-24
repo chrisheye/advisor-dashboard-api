@@ -123,8 +123,36 @@ def get_current_advisor(
         "role": payload["role"]
     }
 
+def create_client_invite_token(advisor_id: str, company_id: str):
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+    return jwt.encode(
+        {
+            "advisor_id": advisor_id,
+            "company_id": company_id,
+            "type": "client_invite",
+            "exp": expires_at
+        },
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM
+    )
+
 
 # --- ROUTES ---
+@app.post("/client-invite")
+def create_client_invite(
+    current_advisor: dict = Depends(get_current_advisor)
+):
+    token = create_client_invite_token(
+        current_advisor["advisor_id"],
+        current_advisor["company_id"]
+    )
+
+    return {
+        "ok": True,
+        "invite_token": token
+    }
+
 
 @app.get("/")
 def root():
