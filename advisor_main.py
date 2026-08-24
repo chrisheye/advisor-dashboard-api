@@ -10,6 +10,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
@@ -72,6 +73,7 @@ app.add_middleware(
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 60
+security = HTTPBearer()
 
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is required")
@@ -99,11 +101,10 @@ class AdvisorLogin(BaseModel):
     password: str
 
 
-def get_current_advisor(authorization: str = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
-
-    token = authorization.split(" ", 1)[1]
+def get_current_advisor(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    token = credentials.credentials
 
     try:
         payload = jwt.decode(
