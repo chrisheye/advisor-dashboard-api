@@ -213,6 +213,29 @@ def get_current_client(
     if payload.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client access required")
 
+    with engine.connect() as conn:
+    client = conn.execute(
+        text("""
+            SELECT is_active
+            FROM clients
+            WHERE id = :client_id
+              AND advisor_id = :advisor_id
+              AND company_id = :company_id
+        """),
+        {
+            "client_id": payload["sub"],
+            "advisor_id": payload["advisor_id"],
+            "company_id": payload["company_id"]
+        }
+    ).fetchone()
+
+    if not client or not client.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Client access is inactive"
+    )
+    
+    
     return {
         "client_id": payload["sub"],
         "advisor_id": payload["advisor_id"],
