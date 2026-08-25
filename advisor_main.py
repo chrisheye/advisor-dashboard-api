@@ -356,7 +356,10 @@ def advisor_login(payload: AdvisorLogin):
         ).fetchone()
 
     if not advisor:
-        return {"ok": False, "error": "Invalid email or password"}
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password"
+        )
 
     advisor = dict(advisor._mapping)
 
@@ -364,7 +367,10 @@ def advisor_login(payload: AdvisorLogin):
         return {"ok": False, "error": "Account is inactive"}
 
     if not password_hash.verify(payload.password, advisor["password_hash"]):
-        return {"ok": False, "error": "Invalid email or password"}
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password"
+        )
         
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
 
