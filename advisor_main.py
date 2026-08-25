@@ -98,11 +98,6 @@ class AdvisorLogin(BaseModel):
     email: str
     password: str
 
-class ClientTokenRequest(BaseModel):
-    invite_token: str
-    client_id: str
-
-
 def get_current_advisor(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
@@ -220,41 +215,6 @@ def get_current_client(
         "client_id": payload["sub"],
         "advisor_id": payload["advisor_id"],
         "company_id": payload["company_id"]
-    }
-
-@app.post("/client-access-token")
-def client_access_token(payload: ClientTokenRequest):
-    invite = verify_client_invite_token(payload.invite_token)
-
-    with engine.connect() as conn:
-        client = conn.execute(
-            text("""
-                SELECT id, advisor_id, company_id
-                FROM clients
-                WHERE id = :client_id
-                  AND advisor_id = :advisor_id
-                  AND company_id = :company_id
-            """),
-            {
-                "client_id": payload.client_id,
-                "advisor_id": invite["advisor_id"],
-                "company_id": invite["company_id"]
-            }
-        ).fetchone()
-
-    if not client:
-        raise HTTPException(status_code=401, detail="Invalid client")
-
-    token = create_client_access_token(
-        payload.client_id,
-        invite["advisor_id"],
-        invite["company_id"]
-    )
-
-    return {
-        "ok": True,
-        "access_token": token,
-        "token_type": "bearer"
     }
 
 
