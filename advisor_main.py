@@ -39,6 +39,7 @@ clients = Table(
     Column("id", String, primary_key=True),
     Column("company_id", String, nullable=False),
     Column("advisor_id", String, nullable=False),
+    Column("invite_id", String, nullable=True, unique=True),
     Column("first_name", String, nullable=False),
     Column("last_name", String, nullable=False),
     Column("email", String, nullable=False),
@@ -125,14 +126,14 @@ def get_current_advisor(
     }
     
 def create_client_invite_token(advisor_id: str, company_id: str):
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    invite_id = str(uuid.uuid4())
 
     return jwt.encode(
         {
             "advisor_id": advisor_id,
             "company_id": company_id,
             "type": "client_invite",
-            "exp": expires_at
+            "invite_id": invite_id
         },
         JWT_SECRET,
         algorithm=JWT_ALGORITHM
@@ -141,6 +142,23 @@ def create_client_invite_token(advisor_id: str, company_id: str):
 
 # --- ROUTES ---
  
+@app.post("/migrate-clients-add-invite-id")
+def migrate_clients_add_invite_id():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            ALTER TABLE clients
+            ADD COLUMN IF NOT EXISTS invite_id VARCHAR
+        """))
+
+        conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS clients_invite_id_unique
+            ON clients (invite_id)
+            WHERE invite_id IS NOT NULL
+        """))
+
+    return {"ok": True}
+
+
 
 @app.post("/client-invite")
 def create_client_invite(
@@ -173,7 +191,8 @@ def verify_client_invite_token(token: str):
 
     return {
         "advisor_id": payload["advisor_id"],
-        "company_id": payload["company_id"]
+        "company_id": payload["company_id"],
+        "invite_id": payload["invite_id"]
     }
 
 def create_client_access_token(client_id: str, advisor_id: str, company_id: str):
