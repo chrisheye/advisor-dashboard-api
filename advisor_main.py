@@ -174,10 +174,20 @@ def verify_client_invite_token(token: str):
     if payload.get("type") != "client_invite":
         raise HTTPException(status_code=401, detail="Invalid client invite")
 
+    advisor_id = payload.get("advisor_id")
+    company_id = payload.get("company_id")
+    invite_id = payload.get("invite_id")
+
+    if not advisor_id or not company_id or not invite_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid client invite"
+        )
+
     return {
-        "advisor_id": payload["advisor_id"],
-        "company_id": payload["company_id"],
-        "invite_id": payload["invite_id"]
+        "advisor_id": advisor_id,
+        "company_id": company_id,
+        "invite_id": invite_id
     }
 
 def create_client_access_token(client_id: str, advisor_id: str, company_id: str):
