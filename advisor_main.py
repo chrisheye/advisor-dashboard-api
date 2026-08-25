@@ -364,7 +364,10 @@ def advisor_login(payload: AdvisorLogin):
     advisor = dict(advisor._mapping)
 
     if not advisor["is_active"]:
-        return {"ok": False, "error": "Account is inactive"}
+        raise HTTPException(
+            status_code=403,
+            detail="Account is inactive"
+        )
 
     if not password_hash.verify(payload.password, advisor["password_hash"]):
         raise HTTPException(
