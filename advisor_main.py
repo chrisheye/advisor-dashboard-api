@@ -267,7 +267,7 @@ def get_advisor_clients(
     advisor_id = current_advisor["advisor_id"]
 
     query = """
-        SELECT id, company_id, advisor_id, first_name, last_name, email, created_at
+        SELECT id, company_id, advisor_id, first_name, last_name, email, is_active, created_at
         FROM clients
         WHERE company_id = :company_id
           AND advisor_id = :advisor_id
