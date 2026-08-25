@@ -119,6 +119,26 @@ def get_current_advisor(
     if payload.get("role") != "advisor":
         raise HTTPException(status_code=403, detail="Advisor access required")
 
+    with engine.connect() as conn:
+        advisor = conn.execute(
+            text("""
+                SELECT is_active
+                FROM advisors
+                WHERE id = :advisor_id
+                  AND company_id = :company_id
+            """),
+            {
+                "advisor_id": payload["sub"],
+                "company_id": payload["company_id"]
+            }
+        ).fetchone()
+
+    if not advisor or not advisor.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Account is inactive"
+        )
+
     return {
         "advisor_id": payload["sub"],
         "company_id": payload["company_id"],
