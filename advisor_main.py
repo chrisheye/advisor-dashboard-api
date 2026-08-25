@@ -141,6 +141,37 @@ def create_client_invite_token(advisor_id: str, company_id: str):
 
 # --- ROUTES ---
 
+
+@app.post("/test-deactivate-client/{client_id}")
+def test_deactivate_client(
+    client_id: str,
+    current_advisor: dict = Depends(get_current_advisor)
+):
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("""
+                UPDATE clients
+                SET is_active = FALSE
+                WHERE id = :client_id
+                  AND advisor_id = :advisor_id
+                  AND company_id = :company_id
+            """),
+            {
+                "client_id": client_id,
+                "advisor_id": current_advisor["advisor_id"],
+                "company_id": current_advisor["company_id"]
+            }
+        )
+
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Client not found"
+        )
+
+    return {"ok": True}
+    
+
 @app.post("/client-invite")
 def create_client_invite(
     current_advisor: dict = Depends(get_current_advisor)
