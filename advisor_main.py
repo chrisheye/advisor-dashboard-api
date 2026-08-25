@@ -42,6 +42,7 @@ clients = Table(
     Column("first_name", String, nullable=False),
     Column("last_name", String, nullable=False),
     Column("email", String, nullable=False),
+    Column("is_active", Boolean, nullable=False, server_default="true"),
     Column("created_at", String, nullable=False),
 )
 
@@ -139,6 +140,18 @@ def create_client_invite_token(advisor_id: str, company_id: str):
 
 
 # --- ROUTES ---
+
+@app.post("/migrate-clients-add-is-active")
+def migrate_clients_add_is_active():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            ALTER TABLE clients
+            ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE
+        """))
+
+    return {"ok": True}
+
+
 @app.post("/client-invite")
 def create_client_invite(
     current_advisor: dict = Depends(get_current_advisor)
