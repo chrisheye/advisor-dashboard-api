@@ -142,24 +142,6 @@ def create_client_invite_token(advisor_id: str, company_id: str):
 
 # --- ROUTES ---
  
-@app.post("/migrate-clients-add-invite-id")
-def migrate_clients_add_invite_id():
-    with engine.begin() as conn:
-        conn.execute(text("""
-            ALTER TABLE clients
-            ADD COLUMN IF NOT EXISTS invite_id VARCHAR
-        """))
-
-        conn.execute(text("""
-            CREATE UNIQUE INDEX IF NOT EXISTS clients_invite_id_unique
-            ON clients (invite_id)
-            WHERE invite_id IS NOT NULL
-        """))
-
-    return {"ok": True}
-
-
-
 @app.post("/client-invite")
 def create_client_invite(
     current_advisor: dict = Depends(get_current_advisor)
