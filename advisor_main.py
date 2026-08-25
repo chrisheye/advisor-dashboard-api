@@ -214,7 +214,7 @@ def get_current_client(
         raise HTTPException(status_code=403, detail="Client access required")
 
     with engine.connect() as conn:
-    client = conn.execute(
+        client = conn.execute(
         text("""
             SELECT is_active
             FROM clients
