@@ -139,6 +139,9 @@ def create_client_invite_token(advisor_id: str, company_id: str):
         algorithm=JWT_ALGORITHM
     )
 
+class ClientInviteAccess(BaseModel):
+    invite_token: str
+
 
 # --- ROUTES ---
  
@@ -501,5 +504,51 @@ def create_client(payload: ClientCreate):
         "client_id": client_id,
         "company_id": invite["company_id"],
         "advisor_id": invite["advisor_id"],
+        "client_access_token": client_token
+    }
+
+@app.post("/client-invite-access")
+def client_invite_access(payload: ClientInviteAccess):
+    invite = verify_client_invite_token(payload.invite_token)
+
+    with engine.connect() as conn:
+        client = conn.execute(
+            text("""
+                SELECT id, company_id, advisor_id, is_active
+                FROM clients
+                WHERE invite_id = :invite_id
+                  AND advisor_id = :advisor_id
+                  AND company_id = :company_id
+            """),
+            {
+                "invite_id": invite["invite_id"],
+                "advisor_id": invite["advisor_id"],
+                "company_id": invite["company_id"]
+            }
+        ).fetchone()
+
+    if not client:
+        raise HTTPException(
+            status_code=404,
+            detail="Client profile not yet created"
+        )
+
+    if not client.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Client access is inactive"
+        )
+
+    client_token = create_client_access_token(
+        client.id,
+        client.advisor_id,
+        client.company_id
+    )
+
+    return {
+        "ok": True,
+        "client_id": client.id,
+        "company_id": client.company_id,
+        "advisor_id": client.advisor_id,
         "client_access_token": client_token
     }
