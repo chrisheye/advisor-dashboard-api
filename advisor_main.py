@@ -426,24 +426,69 @@ def advisor_login(payload: AdvisorLogin):
 def create_client(payload: ClientCreate):
     invite = verify_client_invite_token(payload.invite_token)
 
+    with engine.connect() as conn:
+        existing_client = conn.execute(
+            text("""
+                SELECT id, is_active
+                FROM clients
+                WHERE invite_id = :invite_id
+                  AND advisor_id = :advisor_id
+                  AND company_id = :company_id
+            """),
+            {
+                "invite_id": invite["invite_id"],
+                "advisor_id": invite["advisor_id"],
+                "company_id": invite["company_id"]
+            }
+        ).fetchone()
+
+    if existing_client:
+        if not existing_client.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail="Client access is inactive"
+            )
+
+        client_id = existing_client.id
+
+        client_token = create_client_access_token(
+            client_id,
+            invite["advisor_id"],
+            invite["company_id"]
+        )
+
+        return {
+            "ok": True,
+            "client_id": client_id,
+            "company_id": invite["company_id"],
+            "advisor_id": invite["advisor_id"],
+            "client_access_token": client_token
+        }
+
     client_id = str(uuid.uuid4())
 
     with engine.begin() as conn:
-        conn.execute(text("""
-            INSERT INTO clients (
-                id, company_id, advisor_id, first_name, last_name, email, created_at
-            ) VALUES (
-                :id, :company_id, :advisor_id, :first_name, :last_name, :email, :created_at
-            )
-        """), {
-            "id": client_id,
-            "company_id": invite["company_id"],
-            "advisor_id": invite["advisor_id"],
-            "first_name": payload.first_name,
-            "last_name": payload.last_name,
-            "email": payload.email,
-            "created_at": datetime.utcnow().isoformat()
-        })
+        conn.execute(
+            text("""
+                INSERT INTO clients (
+                    id, company_id, advisor_id, invite_id,
+                    first_name, last_name, email, created_at
+                ) VALUES (
+                    :id, :company_id, :advisor_id, :invite_id,
+                    :first_name, :last_name, :email, :created_at
+                )
+            """),
+            {
+                "id": client_id,
+                "company_id": invite["company_id"],
+                "advisor_id": invite["advisor_id"],
+                "invite_id": invite["invite_id"],
+                "first_name": payload.first_name,
+                "last_name": payload.last_name,
+                "email": payload.email,
+                "created_at": datetime.utcnow().isoformat()
+            }
+        )
 
     client_token = create_client_access_token(
         client_id,
