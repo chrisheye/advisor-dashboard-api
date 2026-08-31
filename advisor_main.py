@@ -9,8 +9,8 @@ import jwt
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, Header, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, Header, HTTPException, Depends, Request, Response
+
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
@@ -75,7 +75,6 @@ app.add_middleware(
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 60
-security = HTTPBearer()
 
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is required")
@@ -100,10 +99,11 @@ class AdvisorLogin(BaseModel):
     email: str
     password: str
 
-def get_current_advisor(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    token = credentials.credentials
+def get_current_advisor(request: Request):
+    token = request.cookies.get("advisor_access_token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Advisor session required")
 
     try:
         payload = jwt.decode(
@@ -226,10 +226,11 @@ def create_client_access_token(client_id: str, advisor_id: str, company_id: str)
         algorithm=JWT_ALGORITHM
     )
 
-def get_current_client(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    token = credentials.credentials
+def get_current_client(request: Request):
+    token = request.cookies.get("client_access_token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Client session required")
 
     try:
         payload = jwt.decode(
@@ -404,7 +405,7 @@ def get_advisor_sessions(current_advisor: dict = Depends(get_current_advisor)):
 
 
 @app.post("/login")
-def advisor_login(payload: AdvisorLogin):
+def advisor_login(payload: AdvisorLogin, response: Response):
     with engine.connect() as conn:
         advisor = conn.execute(
             text("""
@@ -446,17 +447,23 @@ def advisor_login(payload: AdvisorLogin):
         },
         JWT_SECRET,
         algorithm=JWT_ALGORITHM
+    )
+    
+    response.set_cookie(
+    key="advisor_access_token",
+    value=token,
+    httponly=True,
+    secure=True,
+    samesite="none",
+    max_age=JWT_EXPIRE_MINUTES * 60
     )    
-        
 
     return {
-        "ok": True,
-        "access_token": token,
-        "token_type": "bearer"
-    }   
+        "ok": True
+    } 
 
 @app.post("/clients")
-def create_client(payload: ClientCreate):
+def create_client(payload: ClientCreate, response: Response):
     invite = verify_client_invite_token(payload.invite_token)
 
     with engine.connect() as conn:
@@ -490,12 +497,20 @@ def create_client(payload: ClientCreate):
             invite["company_id"]
         )
 
+        response.set_cookie(
+            key="client_access_token",
+            value=client_token,
+            httponly=True,
+            secure=True,
+            samesite="none",
+            max_age=86400
+        )
+        
         return {
             "ok": True,
             "client_id": client_id,
             "company_id": invite["company_id"],
-            "advisor_id": invite["advisor_id"],
-            "client_access_token": client_token
+            "advisor_id": invite["advisor_id"]
         }
 
     client_id = str(uuid.uuid4())
@@ -529,16 +544,24 @@ def create_client(payload: ClientCreate):
         invite["company_id"]
     )
 
+    response.set_cookie(
+    key="client_access_token",
+    value=client_token,
+    httponly=True,
+    secure=True,
+    samesite="none",
+    max_age=86400
+)
+    
     return {
         "ok": True,
         "client_id": client_id,
         "company_id": invite["company_id"],
-        "advisor_id": invite["advisor_id"],
-        "client_access_token": client_token
+        "advisor_id": invite["advisor_id"]
     }
 
 @app.post("/client-invite-access")
-def client_invite_access(payload: ClientInviteAccess):
+def client_invite_access(payload: ClientInviteAccess, response: Response):
     invite = verify_client_invite_token(payload.invite_token)
 
     with engine.connect() as conn:
@@ -574,11 +597,18 @@ def client_invite_access(payload: ClientInviteAccess):
         client.advisor_id,
         client.company_id
     )
-
+    
+    response.set_cookie(
+    key="client_access_token",
+    value=client_token,
+    httponly=True,
+    secure=True,
+    samesite="none",
+    max_age=86400
+)
     return {
         "ok": True,
         "client_id": client.id,
         "company_id": client.company_id,
-        "advisor_id": client.advisor_id,
-        "client_access_token": client_token
+        "advisor_id": client.advisor_id
     }
