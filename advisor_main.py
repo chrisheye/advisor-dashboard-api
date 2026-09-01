@@ -454,7 +454,7 @@ def advisor_login(payload: AdvisorLogin, response: Response):
     value=token,
     httponly=True,
     secure=True,
-    samesite="none",
+    samesite="lax",
     max_age=JWT_EXPIRE_MINUTES * 60
     )    
 
@@ -502,7 +502,7 @@ def create_client(payload: ClientCreate, response: Response):
             value=client_token,
             httponly=True,
             secure=True,
-            samesite="none",
+            samesite="lax",
             max_age=86400
         )
         
@@ -549,7 +549,7 @@ def create_client(payload: ClientCreate, response: Response):
     value=client_token,
     httponly=True,
     secure=True,
-    samesite="none",
+    samesite="lax",
     max_age=86400
 )
     
@@ -603,7 +603,7 @@ def client_invite_access(payload: ClientInviteAccess, response: Response):
     value=client_token,
     httponly=True,
     secure=True,
-    samesite="none",
+    samesite="lax",
     max_age=86400
 )
     return {
