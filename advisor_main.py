@@ -66,7 +66,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://app.whealthchat.ai"],
+    allow_origins=[
+        "https://app.whealthchat.ai",
+        "https://demo.whealthchat.ai",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
