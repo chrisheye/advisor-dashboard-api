@@ -83,7 +83,20 @@ auth_links = Table(
     Column("consumed_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
-metadata.create_all(engine, tables=[advisors, auth_links])
+# Server-side revocable client sessions. A token is never stored in plaintext.
+client_login_sessions = Table(
+    "client_login_sessions", metadata,
+    Column("id", String, primary_key=True),
+    Column("token_hash", String, nullable=False, unique=True),
+    Column("client_id", String, nullable=False),
+    Column("advisor_id", String, nullable=False),
+    Column("company_id", String, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("last_seen_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("revoked_at", DateTime(timezone=True), nullable=True),
+)
+metadata.create_all(engine, tables=[advisors, auth_links, client_login_sessions])
 
 app = FastAPI()
 
@@ -208,73 +221,65 @@ class ClientInviteAccess(BaseModel):
 def legacy_client_invite_disabled():
     raise HTTPException(status_code=410, detail="Use /client-invitations")
 
-def create_client_access_token(client_id: str, advisor_id: str, company_id: str):
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+# Every authenticated visit extends expiry by 30 days. Sessions remain valid
+# indefinitely with regular activity, unless revoked or the client is deactivated.
+CLIENT_IDLE_DAYS = 30
+CLIENT_COOKIE_MAX_AGE = CLIENT_IDLE_DAYS * 24 * 60 * 60
 
-    return jwt.encode(
-        {
-            "sub": client_id,
-            "advisor_id": advisor_id,
-            "company_id": company_id,
-            "role": "client",
-            "type": "client_session",
-            "exp": expires_at
-        },
-        JWT_SECRET,
-        algorithm=JWT_ALGORITHM
+
+def _client_session_cookie(response: Response, raw_token: str):
+    response.set_cookie(
+        "client_access_token", raw_token, httponly=True, secure=True,
+        samesite="lax", max_age=CLIENT_COOKIE_MAX_AGE, path="/",
     )
 
-def get_current_client(request: Request):
-    token = request.cookies.get("client_access_token")
 
-    if not token:
+def _create_client_session(response: Response, client_id: str, advisor_id: str, company_id: str):
+    raw_token = secrets.token_urlsafe(48)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        conn.execute(client_login_sessions.insert().values(
+            id=str(uuid.uuid4()),
+            token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+            client_id=client_id, advisor_id=advisor_id, company_id=company_id,
+            created_at=now, last_seen_at=now,
+            expires_at=now + timedelta(days=CLIENT_IDLE_DAYS), revoked_at=None,
+        ))
+    _client_session_cookie(response, raw_token)
+
+
+def get_current_client(request: Request, response: Response):
+    raw_token = request.cookies.get("client_access_token")
+    if not raw_token:
         raise HTTPException(status_code=401, detail="Client session required")
 
-    try:
-        payload = jwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms=[JWT_ALGORITHM]
-        )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Client session expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid client session")
+    now = datetime.now(timezone.utc)
+    digest = hashlib.sha256(raw_token.encode()).hexdigest()
+    with engine.begin() as conn:
+        # Lock the row to serialize validation, renewal and logout.
+        session = conn.execute(text("""
+            SELECT s.client_id, s.advisor_id, s.company_id, c.is_active
+              FROM client_login_sessions s
+              JOIN clients c ON c.id = s.client_id
+               AND c.advisor_id = s.advisor_id AND c.company_id = s.company_id
+             WHERE s.token_hash = :digest AND s.revoked_at IS NULL
+               AND s.expires_at > :now
+             FOR UPDATE OF s
+        """), {"digest": digest, "now": now}).mappings().first()
+        if not session or not session["is_active"]:
+            raise HTTPException(status_code=401, detail="Client session expired or revoked")
+        conn.execute(text("""
+            UPDATE client_login_sessions
+               SET last_seen_at = :now, expires_at = :expires_at
+             WHERE token_hash = :digest
+        """), {"now": now, "expires_at": now + timedelta(days=CLIENT_IDLE_DAYS),
+               "digest": digest})
 
-    if payload.get("type") != "client_session":
-        raise HTTPException(status_code=401, detail="Invalid client session")
-        
-    if payload.get("role") != "client":
-        raise HTTPException(status_code=403, detail="Client access required")
-
-    with engine.connect() as conn:
-        client = conn.execute(
-        text("""
-            SELECT is_active
-            FROM clients
-            WHERE id = :client_id
-              AND advisor_id = :advisor_id
-              AND company_id = :company_id
-        """),
-        {
-            "client_id": payload["sub"],
-            "advisor_id": payload["advisor_id"],
-            "company_id": payload["company_id"]
-        }
-    ).fetchone()
-
-    if not client or not client.is_active:
-        raise HTTPException(
-            status_code=403,
-            detail="Client access is inactive"
-    )
-    
-    
-    return {
-        "client_id": payload["sub"],
-        "advisor_id": payload["advisor_id"],
-        "company_id": payload["company_id"]
-    }
+    # Refresh the browser cookie too; updating the DB alone is insufficient.
+    _client_session_cookie(response, raw_token)
+    return {"client_id": session["client_id"],
+            "advisor_id": session["advisor_id"],
+            "company_id": session["company_id"]}
 
 
 @app.get("/")
@@ -505,7 +510,9 @@ def _new_link(purpose: str, email: str, company_id: str, advisor_id: str,
     return raw
 
 
-def _send_auth_email(email: str, token: str, purpose: str, additional_tokens: list[str] | None = None):
+def _send_auth_email(email: str, token: str, purpose: str,
+                     additional_tokens: list[str] | None = None,
+                     account_labels: list[str] | None = None):
     api_key = os.getenv("RESEND_API_KEY", "").strip()
     sender = os.getenv("RESEND_FROM", "").strip()
     if not CLIENT_APP_URL.startswith("https://") or not api_key or not sender:
@@ -526,7 +533,12 @@ def _send_auth_email(email: str, token: str, purpose: str, additional_tokens: li
             extra_params["auth_token"] = extra_token
             all_links.append(urlunsplit((parsed.scheme, parsed.netloc, parsed.path,
                                          urlencode(extra_params), "")))
-        numbered_links = "\n\n".join(f"Account {i}: {item}" for i, item in enumerate(all_links, 1))
+        # Identify multiple client profiles by advisor and creation date instead
+        # of anonymous "Account 1 / Account 2" labels.
+        numbered_links = "\n\n".join(
+            f"{(account_labels[i] if account_labels and i < len(account_labels) else f'Account {i + 1}')}: {item}"
+            for i, item in enumerate(all_links)
+        )
         body = ("Your email address is associated with multiple WhealthChat client accounts. "
                 "Choose the link for the account you want to access:\n\n"
                 f"{numbered_links}\n\nEach link expires in {ttl} and works only once. "
@@ -561,9 +573,7 @@ def _send_auth_email(email: str, token: str, purpose: str, additional_tokens: li
 
 
 def _set_client_cookie(response: Response, client_id: str, advisor_id: str, company_id: str):
-    token = create_client_access_token(client_id, advisor_id, company_id)
-    response.set_cookie("client_access_token", token, httponly=True,
-                        secure=True, samesite="lax", max_age=86400, path="/")
+    _create_client_session(response, client_id, advisor_id, company_id)
 
 
 @app.post("/client-invitations", status_code=202)
@@ -571,6 +581,19 @@ def send_client_invitation(payload: EmailClientInvite,
                            current_advisor: dict = Depends(get_current_advisor)):
     # Authenticate the advisor; only the server chooses firm and advisor IDs.
     email = _normalize_email(str(payload.email))
+    with engine.connect() as conn:
+        # An existing client under the same advisor keeps their original client_id.
+        existing = conn.execute(text("""
+            SELECT id FROM clients WHERE lower(email) = :email
+              AND company_id = :company_id AND advisor_id = :advisor_id
+              AND is_active = true ORDER BY created_at LIMIT 1
+        """), {"email": email, "company_id": current_advisor["company_id"],
+               "advisor_id": current_advisor["advisor_id"]}).first()
+    if existing:
+        token = _new_link("login", email, current_advisor["company_id"],
+                          current_advisor["advisor_id"], client_id=existing.id)
+        _send_auth_email(email, token, "login")
+        return {"ok": True, "message": "Existing client sign-in link sent"}
     token = _new_link("invite", email,
                       current_advisor["company_id"], current_advisor["advisor_id"],
                       payload.first_name.strip(), payload.last_name.strip())
@@ -584,8 +607,11 @@ def request_client_sign_in(payload: ClientLoginRequest):
     email = _normalize_email(str(payload.email))
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT id, advisor_id, company_id FROM clients
-            WHERE lower(email) = :email AND is_active = true
+            SELECT c.id, c.advisor_id, c.company_id, c.first_name, c.last_name,
+                   c.created_at, a.email AS advisor_email
+              FROM clients c LEFT JOIN advisors a ON a.id = c.advisor_id
+             WHERE lower(c.email) = :email AND c.is_active = true
+             ORDER BY c.created_at, c.id
         """), {"email": email}).fetchall()
     # Basic per-email throttling. Also enforce IP-based throttling at the edge
     # before opening this public endpoint to the internet.
@@ -605,7 +631,13 @@ def request_client_sign_in(payload: ClientLoginRequest):
         # Send a single email even when the address belongs to more than one
         # client record. Keep distinct account links rather than guessing which
         # advisor/client identity should be used.
-        _send_auth_email(email, tokens[0], "login", additional_tokens=tokens[1:])
+        labels = [
+            f"Advisor {row.advisor_email or 'not listed'} — "
+            f"{row.first_name} {row.last_name} — Created {str(row.created_at)[:10]}"
+            for row in rows
+        ]
+        _send_auth_email(email, tokens[0], "login", additional_tokens=tokens[1:],
+                         account_labels=labels)
     return {"ok": True, "message": "If an account exists, a sign-in link will be emailed"}
 
 
@@ -626,6 +658,11 @@ def verify_client_link(payload: ClientLinkVerify, response: Response):
             raise HTTPException(status_code=401, detail="Link expired or already used")
 
         if link["purpose"] == "invite":
+            # Serialize registration for this advisor and email. FOR UPDATE on
+            # an existing row alone cannot lock the absence of a client record.
+            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {
+                "key": "client:" + link["company_id"] + ":" + link["advisor_id"] + ":" + link["email"]
+            })
             # Email ownership is proved by receiving the invitation in that inbox.
             # Reuse an existing identity for this advisor rather than duplicate it.
             existing = conn.execute(text("""
@@ -671,6 +708,14 @@ def client_session_status(current_client: dict = Depends(get_current_client)):
 
 
 @app.post("/client-auth/logout")
-def client_logout(response: Response):
+def client_logout(request: Request, response: Response):
+    raw = request.cookies.get("client_access_token")
+    if raw:
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE client_login_sessions SET revoked_at = :now
+                WHERE token_hash = :digest AND revoked_at IS NULL
+            """), {"now": datetime.now(timezone.utc), "digest": digest})
     response.delete_cookie("client_access_token", path="/", secure=True, httponly=True, samesite="lax")
     return {"ok": True}
