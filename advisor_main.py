@@ -139,6 +139,9 @@ class EmailClientInvite(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
     email: EmailStr
 
+class AdvisorResendInvitation(BaseModel):
+    client_id: str = Field(min_length=1, max_length=100)
+
 class ClientLoginRequest(BaseModel):
     email: EmailStr
 
@@ -601,6 +604,36 @@ def send_client_invitation(payload: EmailClientInvite,
     return {"ok": True, "message": "Invitation email sent"}
 
 
+@app.post("/advisor-clients/resend-invitation", status_code=202)
+def advisor_resend_invitation(payload: AdvisorResendInvitation,
+                              current_advisor: dict = Depends(get_current_advisor)):
+    # Select the recipient solely from the authenticated advisor's own records.
+    with engine.connect() as conn:
+        client = conn.execute(text("""
+            SELECT id, email FROM clients
+             WHERE id = :client_id AND advisor_id = :advisor_id
+               AND company_id = :company_id AND is_active = true
+        """), {"client_id": payload.client_id,
+                "advisor_id": current_advisor["advisor_id"],
+                "company_id": current_advisor["company_id"]}).mappings().first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+        # Limit repeated email requests for this client; avoid rapid accidental resends.
+        recent = conn.execute(text("""
+            SELECT 1 FROM client_auth_links
+             WHERE client_id = :client_id AND purpose = 'login'
+               AND created_at > :cutoff LIMIT 1
+        """), {"client_id": client["id"],
+                "cutoff": datetime.now(timezone.utc) - timedelta(seconds=60)}).first()
+        if recent:
+            raise HTTPException(status_code=429,
+                                detail="A sign-in link was sent recently. Please wait a minute before resending.")
+    token = _new_link("login", client["email"], current_advisor["company_id"],
+                      current_advisor["advisor_id"], client_id=client["id"])
+    _send_auth_email(client["email"], token, "login")
+    return {"ok": True, "message": "Sign-in link sent"}
+
+
 @app.post("/client-auth/request-link", status_code=202)
 def request_client_sign_in(payload: ClientLoginRequest):
     # Identical public response whether or not email belongs to a client.
@@ -704,7 +737,17 @@ def verify_client_link(payload: ClientLinkVerify, response: Response):
 
 @app.get("/client-auth/me")
 def client_session_status(current_client: dict = Depends(get_current_client)):
-    return {"ok": True, **current_client}
+    # Return the display name only for the authenticated client identity.
+    with engine.connect() as conn:
+        client = conn.execute(text("""
+            SELECT first_name, last_name FROM clients
+             WHERE id = :client_id AND advisor_id = :advisor_id
+               AND company_id = :company_id AND is_active = true
+        """), current_client).mappings().first()
+    if not client:
+        raise HTTPException(status_code=401, detail="Client session invalid")
+    return {"ok": True, **current_client,
+            "first_name": client["first_name"], "last_name": client["last_name"]}
 
 
 @app.post("/client-auth/logout")
