@@ -505,7 +505,7 @@ def _new_link(purpose: str, email: str, company_id: str, advisor_id: str,
     return raw
 
 
-def _send_auth_email(email: str, token: str, purpose: str):
+def _send_auth_email(email: str, token: str, purpose: str, additional_tokens: list[str] | None = None):
     api_key = os.getenv("RESEND_API_KEY", "").strip()
     sender = os.getenv("RESEND_FROM", "").strip()
     if not CLIENT_APP_URL.startswith("https://") or not api_key or not sender:
@@ -519,8 +519,21 @@ def _send_auth_email(email: str, token: str, purpose: str):
     subject = "Your WhealthChat invitation" if purpose == "invite" else "Your WhealthChat sign-in link"
     verb = "Finish setting up your account" if purpose == "invite" else "Sign in to your account"
     ttl = "48 hours" if purpose == "invite" else "15 minutes"
-    body = (f"{verb} using this secure, one-time link:\n\n{link}\n\n"
-            f"This link expires in {ttl}. If you did not request it, you can ignore this message.\n")
+    if purpose == "login" and additional_tokens:
+        all_links = [link]
+        for extra_token in additional_tokens:
+            extra_params = dict(parse_qsl(parsed.query))
+            extra_params["auth_token"] = extra_token
+            all_links.append(urlunsplit((parsed.scheme, parsed.netloc, parsed.path,
+                                         urlencode(extra_params), "")))
+        numbered_links = "\n\n".join(f"Account {i}: {item}" for i, item in enumerate(all_links, 1))
+        body = ("Your email address is associated with multiple WhealthChat client accounts. "
+                "Choose the link for the account you want to access:\n\n"
+                f"{numbered_links}\n\nEach link expires in {ttl} and works only once. "
+                "If you did not request this, you can ignore this message.\n")
+    else:
+        body = (f"{verb} using this secure, one-time link:\n\n{link}\n\n"
+                f"This link expires in {ttl}. If you did not request it, you can ignore this message.\n")
     request_body = json.dumps({
         "from": sender,
         "to": [email],
@@ -584,9 +597,15 @@ def request_client_sign_in(payload: ClientLoginRequest):
         """), {"email": email, "cutoff": datetime.now(timezone.utc) - timedelta(seconds=60)}).first()
     if recent:
         return {"ok": True, "message": "If an account exists, a sign-in link will be emailed"}
-    for row in rows:
-        token = _new_link("login", email, row.company_id, row.advisor_id, client_id=row.id)
-        _send_auth_email(email, token, "login")
+    tokens = [
+        _new_link("login", email, row.company_id, row.advisor_id, client_id=row.id)
+        for row in rows
+    ]
+    if tokens:
+        # Send a single email even when the address belongs to more than one
+        # client record. Keep distinct account links rather than guessing which
+        # advisor/client identity should be used.
+        _send_auth_email(email, tokens[0], "login", additional_tokens=tokens[1:])
     return {"ok": True, "message": "If an account exists, a sign-in link will be emailed"}
 
 
