@@ -2,12 +2,19 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
-from sqlalchemy import create_engine, text, MetaData, Table, Column, String, JSON, Boolean
+import logging
+from sqlalchemy import create_engine, text, MetaData, Table, Column, String, JSON, Boolean, DateTime, UniqueConstraint
 from psycopg2.extras import Json
 from pwdlib import PasswordHash
 import jwt
 import json
 import uuid
+import secrets
+import hashlib
+from urllib.request import Request as UrlRequest, urlopen
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from pydantic import EmailStr, Field
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Header, HTTPException, Depends, Request, Response
 
@@ -60,7 +67,23 @@ advisors = Table(
     Column("created_at", String, nullable=False),
 )
 
-metadata.create_all(engine, tables=[advisors])
+# The token table is additive; existing client and assessment tables are unchanged.
+auth_links = Table(
+    "client_auth_links", metadata,
+    Column("id", String, primary_key=True),
+    Column("token_hash", String, nullable=False, unique=True),
+    Column("purpose", String, nullable=False),  # invite or login
+    Column("email", String, nullable=False),
+    Column("first_name", String, nullable=True),
+    Column("last_name", String, nullable=True),
+    Column("company_id", String, nullable=False),
+    Column("advisor_id", String, nullable=False),
+    Column("client_id", String, nullable=True),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("consumed_at", DateTime(timezone=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+metadata.create_all(engine, tables=[advisors, auth_links])
 
 app = FastAPI()
 
@@ -97,6 +120,17 @@ class ClientCreate(BaseModel):
     first_name: str
     last_name: str
     email: str
+
+class EmailClientInvite(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+
+class ClientLoginRequest(BaseModel):
+    email: EmailStr
+
+class ClientLinkVerify(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
 
 class AdvisorLogin(BaseModel):
     email: str
@@ -168,50 +202,11 @@ class ClientInviteAccess(BaseModel):
 
 # --- ROUTES ---
  
-@app.post("/client-invite")
-def create_client_invite(
-    current_advisor: dict = Depends(get_current_advisor)
-):
-    token = create_client_invite_token(
-        current_advisor["advisor_id"],
-        current_advisor["company_id"]
-    )
-
-    return {
-        "ok": True,
-        "invite_token": token
-    }
-
-def verify_client_invite_token(token: str):
-    try:
-        payload = jwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms=[JWT_ALGORITHM]
-        )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Client invite expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid client invite")
-
-    if payload.get("type") != "client_invite":
-        raise HTTPException(status_code=401, detail="Invalid client invite")
-
-    advisor_id = payload.get("advisor_id")
-    company_id = payload.get("company_id")
-    invite_id = payload.get("invite_id")
-
-    if not advisor_id or not company_id or not invite_id:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid client invite"
-        )
-
-    return {
-        "advisor_id": advisor_id,
-        "company_id": company_id,
-        "invite_id": invite_id
-    }
+# Legacy unverified invite endpoints are intentionally disabled in v2.
+# Deploy the matching client/advisor frontend before activating this backend.
+@app.post("/client-invite", status_code=410)
+def legacy_client_invite_disabled():
+    raise HTTPException(status_code=410, detail="Use /client-invitations")
 
 def create_client_access_token(client_id: str, advisor_id: str, company_id: str):
     expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
@@ -465,153 +460,198 @@ def advisor_login(payload: AdvisorLogin, response: Response):
         "ok": True
     } 
 
-@app.post("/clients")
-def create_client(payload: ClientCreate, response: Response):
-    invite = verify_client_invite_token(payload.invite_token)
+@app.post("/clients", status_code=410)
+def legacy_client_creation_disabled():
+    raise HTTPException(status_code=410, detail="Use /client-auth/verify-link")
 
-    with engine.connect() as conn:
-        existing_client = conn.execute(
-            text("""
-                SELECT id, is_active
-                FROM clients
-                WHERE invite_id = :invite_id
-                  AND advisor_id = :advisor_id
-                  AND company_id = :company_id
-            """),
-            {
-                "invite_id": invite["invite_id"],
-                "advisor_id": invite["advisor_id"],
-                "company_id": invite["company_id"]
-            }
-        ).fetchone()
+@app.post("/client-invite-access", status_code=410)
+def legacy_invite_access_disabled():
+    raise HTTPException(status_code=410, detail="Use /client-auth/verify-link")
 
-    if existing_client:
-        if not existing_client.is_active:
-            raise HTTPException(
-                status_code=403,
-                detail="Client access is inactive"
-            )
 
-        client_id = existing_client.id
+# -----------------------------------------------------------------------------
+# CLIENT EMAIL INVITATIONS AND PASSWORDLESS LOGIN (v2)
+# Environment variables: RESEND_API_KEY, RESEND_FROM,
+# CLIENT_APP_URL (the client bot's public HTTPS URL).
+# Email links go to the CLIENT_APP_URL; its frontend must POST the token to
+# /client-auth/verify-link and then remove it from the browser address bar.
+# -----------------------------------------------------------------------------
 
-        client_token = create_client_access_token(
-            client_id,
-            invite["advisor_id"],
-            invite["company_id"]
-        )
+INVITE_TTL_HOURS = 48
+LOGIN_TTL_MINUTES = 15
+CLIENT_APP_URL = os.getenv("CLIENT_APP_URL", "").strip()
 
-        response.set_cookie(
-            key="client_access_token",
-            value=client_token,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            max_age=86400
-        )
-        
-        return {
-            "ok": True,
-            "client_id": client_id,
-            "company_id": invite["company_id"],
-            "advisor_id": invite["advisor_id"]
-        }
 
-    client_id = str(uuid.uuid4())
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
 
+
+def _new_link(purpose: str, email: str, company_id: str, advisor_id: str,
+              first_name: str | None = None, last_name: str | None = None,
+              client_id: str | None = None) -> str:
+    raw = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    ttl = timedelta(hours=INVITE_TTL_HOURS) if purpose == "invite" else timedelta(minutes=LOGIN_TTL_MINUTES)
     with engine.begin() as conn:
-        conn.execute(
-            text("""
-                INSERT INTO clients (
-                    id, company_id, advisor_id, invite_id,
-                    first_name, last_name, email, created_at
-                ) VALUES (
-                    :id, :company_id, :advisor_id, :invite_id,
-                    :first_name, :last_name, :email, :created_at
-                )
-            """),
-            {
-                "id": client_id,
-                "company_id": invite["company_id"],
-                "advisor_id": invite["advisor_id"],
-                "invite_id": invite["invite_id"],
-                "first_name": payload.first_name,
-                "last_name": payload.last_name,
-                "email": payload.email,
-                "created_at": datetime.utcnow().isoformat()
-            }
-        )
+        conn.execute(auth_links.insert().values(
+            id=str(uuid.uuid4()),
+            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            purpose=purpose, email=_normalize_email(email),
+            company_id=company_id, advisor_id=advisor_id,
+            first_name=first_name, last_name=last_name,
+            client_id=client_id, created_at=now, expires_at=now + ttl,
+            consumed_at=None,
+        ))
+    return raw
 
-    client_token = create_client_access_token(
-        client_id,
-        invite["advisor_id"],
-        invite["company_id"]
+
+def _send_auth_email(email: str, token: str, purpose: str):
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    sender = os.getenv("RESEND_FROM", "").strip()
+    if not CLIENT_APP_URL.startswith("https://") or not api_key or not sender:
+        raise HTTPException(status_code=503, detail="Email delivery is not configured")
+
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl
+    parsed = urlsplit(CLIENT_APP_URL)
+    params = dict(parse_qsl(parsed.query))
+    params["auth_token"] = token
+    link = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(params), ""))
+    subject = "Your WhealthChat invitation" if purpose == "invite" else "Your WhealthChat sign-in link"
+    verb = "Finish setting up your account" if purpose == "invite" else "Sign in to your account"
+    ttl = "48 hours" if purpose == "invite" else "15 minutes"
+    body = (f"{verb} using this secure, one-time link:\n\n{link}\n\n"
+            f"This link expires in {ttl}. If you did not request it, you can ignore this message.\n")
+    request_body = json.dumps({
+        "from": sender,
+        "to": [email],
+        "subject": subject,
+        "text": body,
+    }).encode("utf-8")
+    request = UrlRequest(
+        "https://api.resend.com/emails",
+        data=request_body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "WhealthChat-Auth/2.1",
+        },
+        method="POST",
     )
+    try:
+        with urlopen(request, timeout=15) as result:
+            if result.status not in (200, 201, 202):
+                raise HTTPException(status_code=503, detail="Unable to send email")
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        # Do not log the access token, sign-in URL, or API key.
+        logging.error("Resend email delivery failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Unable to send email") from exc
 
-    response.set_cookie(
-    key="client_access_token",
-    value=client_token,
-    httponly=True,
-    secure=True,
-    samesite="lax",
-    max_age=86400
-)
-    
-    return {
-        "ok": True,
-        "client_id": client_id,
-        "company_id": invite["company_id"],
-        "advisor_id": invite["advisor_id"]
-    }
 
-@app.post("/client-invite-access")
-def client_invite_access(payload: ClientInviteAccess, response: Response):
-    invite = verify_client_invite_token(payload.invite_token)
+def _set_client_cookie(response: Response, client_id: str, advisor_id: str, company_id: str):
+    token = create_client_access_token(client_id, advisor_id, company_id)
+    response.set_cookie("client_access_token", token, httponly=True,
+                        secure=True, samesite="lax", max_age=86400, path="/")
 
+
+@app.post("/client-invitations", status_code=202)
+def send_client_invitation(payload: EmailClientInvite,
+                           current_advisor: dict = Depends(get_current_advisor)):
+    # Authenticate the advisor; only the server chooses firm and advisor IDs.
+    email = _normalize_email(str(payload.email))
+    token = _new_link("invite", email,
+                      current_advisor["company_id"], current_advisor["advisor_id"],
+                      payload.first_name.strip(), payload.last_name.strip())
+    _send_auth_email(email, token, "invite")
+    return {"ok": True, "message": "Invitation email sent"}
+
+
+@app.post("/client-auth/request-link", status_code=202)
+def request_client_sign_in(payload: ClientLoginRequest):
+    # Identical public response whether or not email belongs to a client.
+    email = _normalize_email(str(payload.email))
     with engine.connect() as conn:
-        client = conn.execute(
-            text("""
-                SELECT id, company_id, advisor_id, is_active
-                FROM clients
-                WHERE invite_id = :invite_id
-                  AND advisor_id = :advisor_id
-                  AND company_id = :company_id
-            """),
-            {
-                "invite_id": invite["invite_id"],
-                "advisor_id": invite["advisor_id"],
-                "company_id": invite["company_id"]
-            }
-        ).fetchone()
+        rows = conn.execute(text("""
+            SELECT id, advisor_id, company_id FROM clients
+            WHERE lower(email) = :email AND is_active = true
+        """), {"email": email}).fetchall()
+    # Basic per-email throttling. Also enforce IP-based throttling at the edge
+    # before opening this public endpoint to the internet.
+    with engine.connect() as conn:
+        recent = conn.execute(text("""
+            SELECT 1 FROM client_auth_links
+            WHERE purpose = 'login' AND email = :email
+              AND created_at > :cutoff LIMIT 1
+        """), {"email": email, "cutoff": datetime.now(timezone.utc) - timedelta(seconds=60)}).first()
+    if recent:
+        return {"ok": True, "message": "If an account exists, a sign-in link will be emailed"}
+    for row in rows:
+        token = _new_link("login", email, row.company_id, row.advisor_id, client_id=row.id)
+        _send_auth_email(email, token, "login")
+    return {"ok": True, "message": "If an account exists, a sign-in link will be emailed"}
 
-    if not client:
-        raise HTTPException(
-            status_code=404,
-            detail="Client profile not yet created"
-        )
 
-    if not client.is_active:
-        raise HTTPException(
-            status_code=403,
-            detail="Client access is inactive"
-        )
+@app.post("/client-auth/verify-link")
+def verify_client_link(payload: ClientLinkVerify, response: Response):
+    now = datetime.now(timezone.utc)
+    digest = hashlib.sha256(payload.token.encode()).hexdigest()
+    # Atomic one-time redemption. A token is marked consumed even if an account
+    # has since been deactivated; a second redemption is never accepted.
+    with engine.begin() as conn:
+        link = conn.execute(text("""
+            UPDATE client_auth_links
+               SET consumed_at = :now
+             WHERE token_hash = :digest AND consumed_at IS NULL AND expires_at > :now
+         RETURNING purpose, email, first_name, last_name, company_id, advisor_id, client_id
+        """), {"digest": digest, "now": now}).mappings().first()
+        if not link:
+            raise HTTPException(status_code=401, detail="Link expired or already used")
 
-    client_token = create_client_access_token(
-        client.id,
-        client.advisor_id,
-        client.company_id
-    )
-    
-    response.set_cookie(
-    key="client_access_token",
-    value=client_token,
-    httponly=True,
-    secure=True,
-    samesite="lax",
-    max_age=86400
-)
-    return {
-        "ok": True,
-        "client_id": client.id,
-        "company_id": client.company_id,
-        "advisor_id": client.advisor_id
-    }
+        if link["purpose"] == "invite":
+            # Email ownership is proved by receiving the invitation in that inbox.
+            # Reuse an existing identity for this advisor rather than duplicate it.
+            existing = conn.execute(text("""
+                SELECT id, is_active FROM clients
+                 WHERE lower(email) = :email AND company_id = :company_id
+                   AND advisor_id = :advisor_id
+                 ORDER BY created_at LIMIT 1 FOR UPDATE
+            """), {"email": link["email"], "company_id": link["company_id"],
+                   "advisor_id": link["advisor_id"]}).mappings().first()
+            if existing:
+                if not existing["is_active"]:
+                    raise HTTPException(status_code=403, detail="Client access is inactive")
+                client_id = existing["id"]
+            else:
+                client_id = str(uuid.uuid4())
+                conn.execute(text("""
+                    INSERT INTO clients (id, company_id, advisor_id, first_name, last_name,
+                                         email, is_active, created_at)
+                    VALUES (:id, :company_id, :advisor_id, :first_name, :last_name,
+                            :email, true, :created_at)
+                """), {"id": client_id, "company_id": link["company_id"],
+                       "advisor_id": link["advisor_id"],
+                       "first_name": link["first_name"], "last_name": link["last_name"],
+                       "email": link["email"], "created_at": now.isoformat()})
+        else:
+            client_id = link["client_id"]
+            active = conn.execute(text("""
+                SELECT 1 FROM clients WHERE id = :id AND company_id = :company_id
+                  AND advisor_id = :advisor_id AND is_active = true
+            """), {"id": client_id, "company_id": link["company_id"],
+                   "advisor_id": link["advisor_id"]}).first()
+            if not active:
+                raise HTTPException(status_code=403, detail="Client access is inactive")
+
+    _set_client_cookie(response, client_id, link["advisor_id"], link["company_id"])
+    return {"ok": True, "client_id": client_id,
+            "company_id": link["company_id"], "advisor_id": link["advisor_id"]}
+
+
+@app.get("/client-auth/me")
+def client_session_status(current_client: dict = Depends(get_current_client)):
+    return {"ok": True, **current_client}
+
+
+@app.post("/client-auth/logout")
+def client_logout(response: Response):
+    response.delete_cookie("client_access_token", path="/", secure=True, httponly=True, samesite="lax")
+    return {"ok": True}
